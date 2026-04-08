@@ -53,7 +53,7 @@ with st.sidebar:
     st.subheader("🚢 Ship A (KOR)")
     # HHI -> Yard_A
     a_base = st.selectbox("Base Model A", ["Yard_A", "Yard_B", "Yard_C"], index=0)
-    a_capex = st.number_input("CAPEX A ($M)", value=120.0)
+    a_capex = st.number_input("CAPEX A ($M)", value=86.0)
     col1, col2 = st.columns(2)
     with col1:
         a_des_a = st.number_input("Design a (A)", value=DEFAULT_DATA["Design"][a_base][0], format="%.6f")
@@ -67,7 +67,7 @@ with st.sidebar:
     st.subheader("🚢 Ship B (CHN)")
     # SWS -> Yard_C
     b_base = st.selectbox("Base Model B", ["Yard_A", "Yard_B", "Yard_C"], index=2)
-    b_capex = st.number_input("CAPEX B ($M)", value=105.0)
+    b_capex = st.number_input("CAPEX B ($M)", value=80.0)
     col3, col4 = st.columns(2)
     with col3:
         b_des_a = st.number_input("Design a (B)", value=DEFAULT_DATA["Design"][b_base][0], format="%.6f")
