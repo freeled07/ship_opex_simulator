@@ -36,6 +36,7 @@ with st.sidebar:
     st.title("⚙️ Simulation Config")
     v_target = st.slider("Target Speed (knots)", 10.0, 20.0, 14.5, 0.5)
     sailing_ratio = st.slider("Annual Sailing Ratio (%)", 0, 100, 75)
+    sim_years = st.slider("Simulation Period (Years)", 5, 30, 20, 1)  # 기간 설정 슬라이더 추가
     op_days = 365 * (sailing_ratio / 100)
     fuel = st.selectbox("Fuel Type", list(FUEL_INFO.keys()))
 
@@ -95,7 +96,7 @@ p_me_b, foc_b = calc_total_metrics(v_target, b_des_a, b_des_b, b_bal_a, b_bal_b,
 co2_a = foc_a * FUEL_INFO[fuel]['cf']
 co2_b = foc_b * FUEL_INFO[fuel]['cf']
 
-# --- 4. 30년 시뮬레이션 및 규제, 금융, 할인율 통합 ---
+# --- 4. 시뮬레이션 및 규제, 금융, 할인율 통합 ---
 st.title("📊 Ship Efficiency & OPEX Comparison (NPV & Loan Applied)")
 
 # 거시경제 시나리오 통합 데이터프레임 구성 (10년 단위 고정)
@@ -108,7 +109,7 @@ scenario_data = pd.DataFrame({
     "Loan Rate (%)": [loan_rate_base, max(0.0, loan_rate_base-1.0), max(0.0, loan_rate_base-1.5)]
 })
 
-with st.expander("📈 30년 장기 거시경제 시나리오 (Macro-Economic Scenario) - 수정 가능", expanded=False):
+with st.expander("📈 장기 거시경제 시나리오 (Macro-Economic Scenario) - 수정 가능", expanded=False):
     st.markdown("시간이 지남에 따라 변동하는 연료비, 탄소세, 대출 금리를 10년 단위로 설정합니다. 표 안의 숫자를 더블클릭하여 직접 시나리오를 변경할 수 있습니다.")
     edited_scenario = st.data_editor(scenario_data, use_container_width=True)
 
@@ -135,7 +136,8 @@ rem_loan_diff = loan_diff
 total_interest_diff = 0
 principal_payment = loan_diff / loan_term if loan_term > 0 else 0
 
-for y in range(1, 31):
+# 사용자가 설정한 sim_years 만큼 반복 실행
+for y in range(1, sim_years + 1):
     cal_year = start_year + y - 1
     
     # 시점(Period)에 따른 거시경제 변수 매핑
@@ -174,11 +176,11 @@ for y in range(1, 31):
     opex_b = fuel_cost_b + total_penalty_b
     
     # 2. 재무 현금흐름(Cash Flow) 및 할인 계산
-    pure_saving = opex_b - opex_a  # 순수 연료비+탄소세 절감액
+    pure_saving = opex_b - opex_a  
     cum_pure_saving += pure_saving
-    net_profit_pure = cum_pure_saving - capex_diff # 단순 이익 (금융/할인 제외)
+    net_profit_pure = cum_pure_saving - capex_diff 
     
-    # 대출 상환 로직 (변동 금리 + 원금균등상환)
+    # 대출 상환 로직 
     if y <= loan_term:
         interest_payment = rem_loan_diff * current_loan_rate
         loan_payment = principal_payment + interest_payment
@@ -187,14 +189,14 @@ for y in range(1, 31):
     else:
         loan_payment = 0
         
-    ncf_nominal = pure_saving - loan_payment # 대출 갚고 남은 명목 순수익
-    ncf_dcf = ncf_nominal / ((1 + discount_rate)**y) # 할인율이 적용된 현재가치 수익
+    ncf_nominal = pure_saving - loan_payment 
+    ncf_dcf = ncf_nominal / ((1 + discount_rate)**y) 
     
     cum_nominal_ncf += ncf_nominal
     cum_npv_dcf += ncf_dcf
     
-    net_profit_nominal = cum_nominal_ncf - equity_diff # 내 돈 빼고 남은 명목 누적이익
-    net_profit_npv = cum_npv_dcf - equity_diff         # 내 돈 빼고 남은 NPV 누적이익
+    net_profit_nominal = cum_nominal_ncf - equity_diff 
+    net_profit_npv = cum_npv_dcf - equity_diff         
     
     if bep_year_pure is None and net_profit_pure >= 0:
         bep_year_pure = y
@@ -218,7 +220,6 @@ for y in range(1, 31):
 df_res = pd.DataFrame(results)
 
 # --- 5. UI 메트릭 (화살표 오차 해결을 위해 상하 분리 배치) ---
-# 윗줄 (Row 1): Ship A 및 기준 데이터 (화살표 포함)
 m1, m2, m3, m4, m5 = st.columns(5)
 with m1:
     st.metric("총 CAPEX 차액 (A-B)", f"$ {capex_diff/1e6:.1f} M")
@@ -232,12 +233,10 @@ with m4:
     st.metric("Daily CO2 (Ship A)", f"{co2_a:.1f} mt/d", delta=f"{co2_diff_pct:.1f}%" if co2_b > 0 else None, delta_color="inverse")
 with m5:
     final_npv = df_res['Net_Profit_NPV'].iloc[-1]
-    st.metric("30년 최종 NPV (순현재가치)", f"$ {final_npv/1e6:.1f} M")
+    st.metric(f"{sim_years}년 최종 NPV (순현재가치)", f"$ {final_npv/1e6:.1f} M")  # 동적 연동
 
-# 여백 약간 확보
 st.write("")
 
-# 아랫줄 (Row 2): Ship B 및 결과 데이터 (화살표 없음)
 m6, m7, m8, m9, m10 = st.columns(5)
 with m6:
     st.metric("자기자본 투입 차액", f"$ {equity_diff/1e6:.1f} M")
@@ -248,14 +247,13 @@ with m8:
 with m9:
     st.metric("Daily CO2 (Ship B)", f"{co2_b:.1f} mt/d")
 with m10:
-    payback_text = f"{bep_year_npv} 년" if bep_year_npv else "불가 (30년 내)"
+    payback_text = f"{bep_year_npv} 년" if bep_year_npv else f"불가 ({sim_years}년 내)"  # 동적 연동
     st.metric("🎯 실질 페이백 (NPV 기준)", payback_text)
 
 # --- 6. 재무적 손실 요인 가시화 (CSS 높이 절대 고정 패치) ---
 st.divider()
 st.subheader("💸 대출 이자 및 인플레이션(할인율)에 의한 수익 증발 요약")
 
-# CSS를 주입하여 알림 박스들의 절대 세로 높이를 200px로 완벽 고정
 st.markdown("""
 <style>
 div[data-testid="stAlert"] {
@@ -319,7 +317,8 @@ with c3:
 
 # --- 8. 하단: 환경 규제 분석 ---
 st.divider()
-st.subheader("🌍 탄소 규제 페널티 추이 분석 (2026 ~ 2055)")
+end_year = start_year + sim_years - 1
+st.subheader(f"🌍 탄소 규제 페널티 추이 분석 ({start_year} ~ {end_year})")  # 동적 연동
 
 c4, c5 = st.columns(2)
 
