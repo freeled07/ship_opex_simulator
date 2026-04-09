@@ -58,7 +58,6 @@ with st.sidebar:
 
     st.divider()
     st.subheader("🚢 Ship A (KOR)")
-    # HHI -> Yard_A
     a_base = st.selectbox("Base Model A", ["Yard_A", "Yard_B", "Yard_C"], index=0)
     a_capex = st.number_input("CAPEX A ($M)", value=86.0)
     col1, col2 = st.columns(2)
@@ -72,7 +71,6 @@ with st.sidebar:
 
     st.divider()
     st.subheader("🚢 Ship B (CHN)")
-    # SWS -> Yard_C
     b_base = st.selectbox("Base Model B", ["Yard_A", "Yard_B", "Yard_C"], index=2)
     b_capex = st.number_input("CAPEX B ($M)", value=80.0)
     col3, col4 = st.columns(2)
@@ -100,7 +98,7 @@ co2_b = foc_b * FUEL_INFO[fuel]['cf']
 # --- 4. 30년 시뮬레이션 및 규제, 금융, 할인율 통합 ---
 st.title("📊 Ship Efficiency & OPEX Comparison (NPV & Loan Applied)")
 
-# 거시경제 시나리오 통합 데이터프레임 구성
+# 거시경제 시나리오 통합 데이터프레임 구성 (10년 단위 고정)
 current_base_price = FUEL_INFO[fuel]['base_price']
 scenario_data = pd.DataFrame({
     "Period": ["Year 1-10", "Year 11-20", "Year 21-30"], 
@@ -219,54 +217,76 @@ for y in range(1, 31):
 
 df_res = pd.DataFrame(results)
 
-# --- 5. UI 메트릭 (열 5개 배치 유지) ---
+# --- 5. UI 메트릭 (화살표 오차 해결을 위해 상하 분리 배치) ---
+# 윗줄 (Row 1): Ship A 및 기준 데이터 (화살표 포함)
 m1, m2, m3, m4, m5 = st.columns(5)
 with m1:
     st.metric("총 CAPEX 차액 (A-B)", f"$ {capex_diff/1e6:.1f} M")
-    st.metric("자기자본 투입 차액", f"$ {equity_diff/1e6:.1f} M")
 with m2:
     st.metric("Power (Ship A)", f"{p_me_a:.1f} kW")
-    st.metric("Power (Ship B)", f"{p_me_b:.1f} kW")
 with m3:
     foc_diff_pct = ((foc_a - foc_b) / foc_b) * 100 if foc_b > 0 else 0
     st.metric("Total Daily FOC (Ship A)", f"{foc_a:.2f} mt/d", delta=f"{foc_diff_pct:.1f}%", delta_color="inverse")
-    st.metric("Total Daily FOC (Ship B)", f"{foc_b:.2f} mt/d")
 with m4:
     co2_diff_pct = ((co2_a - co2_b) / co2_b) * 100 if co2_b > 0 else 0
     st.metric("Daily CO2 (Ship A)", f"{co2_a:.1f} mt/d", delta=f"{co2_diff_pct:.1f}%" if co2_b > 0 else None, delta_color="inverse")
-    st.metric("Daily CO2 (Ship B)", f"{co2_b:.1f} mt/d")
 with m5:
     final_npv = df_res['Net_Profit_NPV'].iloc[-1]
     st.metric("30년 최종 NPV (순현재가치)", f"$ {final_npv/1e6:.1f} M")
+
+# 여백 약간 확보
+st.write("")
+
+# 아랫줄 (Row 2): Ship B 및 결과 데이터 (화살표 없음)
+m6, m7, m8, m9, m10 = st.columns(5)
+with m6:
+    st.metric("자기자본 투입 차액", f"$ {equity_diff/1e6:.1f} M")
+with m7:
+    st.metric("Power (Ship B)", f"{p_me_b:.1f} kW")
+with m8:
+    st.metric("Total Daily FOC (Ship B)", f"{foc_b:.2f} mt/d")
+with m9:
+    st.metric("Daily CO2 (Ship B)", f"{co2_b:.1f} mt/d")
+with m10:
     payback_text = f"{bep_year_npv} 년" if bep_year_npv else "불가 (30년 내)"
     st.metric("🎯 실질 페이백 (NPV 기준)", payback_text)
 
-# 재무적 손실 요인 가시화
+# --- 6. 재무적 손실 요인 가시화 (CSS 높이 절대 고정 패치) ---
 st.divider()
 st.subheader("💸 대출 이자 및 인플레이션(할인율)에 의한 수익 증발 요약")
+
+# CSS를 주입하여 알림 박스들의 절대 세로 높이를 200px로 완벽 고정
+st.markdown("""
+<style>
+div[data-testid="stAlert"] {
+    height: 200px; 
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+</style>
+""", unsafe_allow_html=True)
+
 fm1, fm2, fm3 = st.columns(3)
 with fm1:
-    st.info(f"**대출 이자로 인한 총 손실액 (변동금리)**\n\n비싼 선박(Ship A) 대출금에 대해 추가로 발생한 누적 이자액입니다.\n### - $ {total_interest_diff/1e6:.1f} M")
+    st.info(f"**1. 이자 지출액 (변동금리)**\n\n비싼 선박을 구매하며 추가로 발생한 대출 이자의 누적액입니다.\n\n### - $ {total_interest_diff/1e6:.1f} M")
 with fm2:
     discount_loss = df_res['Net_Profit_Nominal'].iloc[-1] - df_res['Net_Profit_NPV'].iloc[-1]
-    st.warning(f"**시간가치 하락분 (할인율 적용)**\n\n미래에 벌어들일 돈을 현재가치로 깎았을 때 발생하는 가치 증발분입니다.\n### - $ {discount_loss/1e6:.1f} M")
+    st.warning(f"**2. 시간가치 하락분 (할인율)**\n\n미래에 발생할 절감액을 현재 가치로 할인했을 때 증발한 금액입니다.\n\n### - $ {discount_loss/1e6:.1f} M")
 with fm3:
     pure_profit = df_res['Net_Profit_Pure'].iloc[-1]
-    st.success(f"**단순 비교 이익 vs 최종 NPV**\n\n단순 OPEX 절감액($ {pure_profit/1e6:.1f} M)에서 금융손실과 시차를 모두 뺀 진짜 이익입니다.\n### $ {final_npv/1e6:.1f} M")
+    st.success(f"**3. 실질 순이익 (최종 NPV)**\n\n단순 절감액에서 이자 비용과 시간가치 하락분을 뺀 진짜 이익입니다.\n\n### $ {final_npv/1e6:.1f} M")
 
 st.divider()
 
-# --- 6. 시각화 (상단 3열) ---
+# --- 7. 시각화 (상단 3열) ---
 c1, c2, c3 = st.columns([2, 1, 1])
 
 with c1:
     st.subheader("📈 Profit Curve: 단순이익 vs 명목이익 vs 현재가치(NPV)")
     fig = go.Figure()
-    # 단순 이익 (대출 이자 및 할인율 미반영)
     fig.add_trace(go.Scatter(x=df_res['Calendar_Year'], y=df_res['Net_Profit_Pure'], mode='lines', name='단순 OPEX 누적이익', line=dict(color='gray', width=2, dash='dash')))
-    # 대출 이자만 반영된 명목 현금흐름
     fig.add_trace(go.Scatter(x=df_res['Calendar_Year'], y=df_res['Net_Profit_Nominal'], mode='lines', name='명목 이익 (대출이자 차감)', line=dict(color='#82C59D', width=2)))
-    # NPV (대출 이자 + 시간가치 모두 반영) - 최종 타당성
     fig.add_trace(go.Scatter(x=df_res['Calendar_Year'], y=df_res['Net_Profit_NPV'], fill='tozeroy', name='최종 NPV (순현재가치)', line=dict(color='#00CC96', width=4)))
     
     cal_bep_year_npv = start_year + bep_year_npv - 1 if bep_year_npv else None
@@ -297,7 +317,7 @@ with c3:
     fig_bar.update_layout(margin=dict(l=20, r=20, t=30, b=20), yaxis_title="Power (kW)")
     st.plotly_chart(fig_bar, use_container_width=True)
 
-# --- 7. 하단: 환경 규제 분석 ---
+# --- 8. 하단: 환경 규제 분석 ---
 st.divider()
 st.subheader("🌍 탄소 규제 페널티 추이 분석 (2026 ~ 2055)")
 
