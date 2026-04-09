@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+import itertools
 
 # 페이지 설정
 st.set_page_config(page_title="Ship Professional Analyzer", layout="wide")
@@ -36,7 +37,7 @@ with st.sidebar:
     st.title("⚙️ Simulation Config")
     v_target = st.slider("Target Speed (knots)", 10.0, 20.0, 14.5, 0.5)
     sailing_ratio = st.slider("Annual Sailing Ratio (%)", 0, 100, 75)
-    sim_years = st.slider("Simulation Period (Years)", 5, 30, 20, 1)  # 기간 설정 슬라이더 추가
+    sim_years = st.slider("Simulation Period (Years)", 5, 30, 20, 1)  
     op_days = 365 * (sailing_ratio / 100)
     fuel = st.selectbox("Fuel Type", list(FUEL_INFO.keys()))
 
@@ -54,7 +55,7 @@ with st.sidebar:
     st.header("💰 재무 & 금융 모델")
     discount_rate = st.number_input("할인율 (Discount Rate, %)", value=7.0, step=0.5) / 100
     ltv = st.slider("선박 대출 비율 (LTV, %)", 0, 100, 70) / 100
-    loan_rate_base = st.number_input("초기 대출 금리 (Loan Rate, %)", value=6.5, step=0.5)
+    loan_rate_base = st.number_input("초기 대출 금리 (Loan Rate, %)", value=6.5, step=0.5) / 100
     loan_term = st.number_input("대출 기간 (Years)", value=15, step=1, min_value=1)
 
     st.divider()
@@ -99,14 +100,14 @@ co2_b = foc_b * FUEL_INFO[fuel]['cf']
 # --- 4. 시뮬레이션 및 규제, 금융, 할인율 통합 ---
 st.title("📊 Ship Efficiency & OPEX Comparison (NPV & Loan Applied)")
 
-# 거시경제 시나리오 통합 데이터프레임 구성 (10년 단위 고정)
+# 거시경제 시나리오 통합 데이터프레임 구성 
 current_base_price = FUEL_INFO[fuel]['base_price']
 scenario_data = pd.DataFrame({
     "Period": ["Year 1-10", "Year 11-20", "Year 21-30"], 
     "Fuel Price ($/ton)": [int(current_base_price), int(current_base_price*(1.02**10)), int(current_base_price*(1.02**20))],
     "EU-ETS Price ($/ton)": [int(eua_price_base), int(eua_price_base*1.3), int(eua_price_base*1.6)],
     "IMO Levy ($/ton)": [int(imo_levy_base), int(imo_levy_base*1.5), int(imo_levy_base*2.0)],
-    "Loan Rate (%)": [loan_rate_base, max(0.0, loan_rate_base-1.0), max(0.0, loan_rate_base-1.5)]
+    "Loan Rate (%)": [loan_rate_base*100, max(0.0, loan_rate_base*100-1.0), max(0.0, loan_rate_base*100-1.5)]
 })
 
 with st.expander("📈 장기 거시경제 시나리오 (Macro-Economic Scenario) - 수정 가능", expanded=False):
@@ -131,12 +132,11 @@ cons_years_a = 0
 cons_years_b = 0
 EUR_TO_USD = 1.1
 
-# 선박 금융 상환 트래킹 (원금균등상환 방식)
+# 선박 금융 상환 트래킹 
 rem_loan_diff = loan_diff
 total_interest_diff = 0
 principal_payment = loan_diff / loan_term if loan_term > 0 else 0
 
-# 사용자가 설정한 sim_years 만큼 반복 실행
 for y in range(1, sim_years + 1):
     cal_year = start_year + y - 1
     
@@ -180,7 +180,6 @@ for y in range(1, sim_years + 1):
     cum_pure_saving += pure_saving
     net_profit_pure = cum_pure_saving - capex_diff 
     
-    # 대출 상환 로직 
     if y <= loan_term:
         interest_payment = rem_loan_diff * current_loan_rate
         loan_payment = principal_payment + interest_payment
@@ -219,7 +218,7 @@ for y in range(1, sim_years + 1):
 
 df_res = pd.DataFrame(results)
 
-# --- 5. UI 메트릭 (화살표 오차 해결을 위해 상하 분리 배치) ---
+# --- 5. UI 메트릭 ---
 m1, m2, m3, m4, m5 = st.columns(5)
 with m1:
     st.metric("총 CAPEX 차액 (A-B)", f"$ {capex_diff/1e6:.1f} M")
@@ -233,7 +232,7 @@ with m4:
     st.metric("Daily CO2 (Ship A)", f"{co2_a:.1f} mt/d", delta=f"{co2_diff_pct:.1f}%" if co2_b > 0 else None, delta_color="inverse")
 with m5:
     final_npv = df_res['Net_Profit_NPV'].iloc[-1]
-    st.metric(f"{sim_years}년 최종 NPV (순현재가치)", f"$ {final_npv/1e6:.1f} M")  # 동적 연동
+    st.metric(f"{sim_years}년 최종 NPV (순현재가치)", f"$ {final_npv/1e6:.1f} M")  
 
 st.write("")
 
@@ -247,10 +246,10 @@ with m8:
 with m9:
     st.metric("Daily CO2 (Ship B)", f"{co2_b:.1f} mt/d")
 with m10:
-    payback_text = f"{bep_year_npv} 년" if bep_year_npv else f"불가 ({sim_years}년 내)"  # 동적 연동
+    payback_text = f"{bep_year_npv} 년" if bep_year_npv else f"불가 ({sim_years}년 내)"  
     st.metric("🎯 실질 페이백 (NPV 기준)", payback_text)
 
-# --- 6. 재무적 손실 요인 가시화 (CSS 높이 절대 고정 패치) ---
+# --- 6. 재무적 손실 요인 가시화 ---
 st.divider()
 st.subheader("💸 대출 이자 및 인플레이션(할인율)에 의한 수익 증발 요약")
 
@@ -318,36 +317,279 @@ with c3:
 # --- 8. 하단: 환경 규제 분석 ---
 st.divider()
 end_year = start_year + sim_years - 1
-st.subheader(f"🌍 탄소 규제 페널티 추이 분석 ({start_year} ~ {end_year})")  # 동적 연동
+st.subheader(f"🌍 탄소 규제 페널티 추이 분석 ({start_year} ~ {end_year})")
 
 c4, c5 = st.columns(2)
 
 with c4:
     st.markdown("**항목별/연도별 누적 페널티 비용 분석 (이중과세 방지 적용)**")
     fig_pen = go.Figure()
-    
-    # Ship A
     fig_pen.add_trace(go.Bar(x=df_res['Calendar_Year'], y=df_res['ETS_A'], name='EU-ETS (A)', marker_color='#91bceb', offsetgroup=1))
     fig_pen.add_trace(go.Bar(x=df_res['Calendar_Year'], y=df_res['IMO_A'], name='IMO Levy (A)', marker_color='#1f77b4', offsetgroup=1, base=df_res['ETS_A']))
     fig_pen.add_trace(go.Bar(x=df_res['Calendar_Year'], y=df_res['FuelEU_A'], name='FuelEU Penalty (A)', marker_color='#08306b', offsetgroup=1, base=df_res['ETS_A']+df_res['IMO_A']))
-    
-    # Ship B
     fig_pen.add_trace(go.Bar(x=df_res['Calendar_Year'], y=df_res['ETS_B'], name='EU-ETS (B)', marker_color='#fdcdac', offsetgroup=2))
     fig_pen.add_trace(go.Bar(x=df_res['Calendar_Year'], y=df_res['IMO_B'], name='IMO Levy (B)', marker_color='#ff7f0e', offsetgroup=2, base=df_res['ETS_B']))
     fig_pen.add_trace(go.Bar(x=df_res['Calendar_Year'], y=df_res['FuelEU_B'], name='FuelEU Penalty (B)', marker_color='#7f2704', offsetgroup=2, base=df_res['ETS_B']+df_res['IMO_B']))
-    
     fig_pen.update_layout(barmode='group', xaxis_title="Calendar Year", yaxis_title="Penalty Cost ($)", hovermode="x unified")
     st.plotly_chart(fig_pen, use_container_width=True)
 
 with c5:
     st.markdown("**온실가스 집약도(GHG Intensity) 규제 한계선**")
     fig_limit = go.Figure()
-    fig_limit.add_trace(go.Scatter(x=df_res['Calendar_Year'], y=df_res['FuelEU_Target'], 
-                                   mode='lines+markers', name='Target Limit', line=dict(color='red', width=3, dash='dash')))
-    fig_limit.add_hline(y=FUEL_INFO[fuel]['wtw_intensity'], line_dash="solid", line_color="black", 
-                        annotation_text=f"Selected Fuel ({fuel}): {FUEL_INFO[fuel]['wtw_intensity']}", annotation_position="top right")
+    fig_limit.add_trace(go.Scatter(x=df_res['Calendar_Year'], y=df_res['FuelEU_Target'], mode='lines+markers', name='Target Limit', line=dict(color='red', width=3, dash='dash')))
+    fig_limit.add_hline(y=FUEL_INFO[fuel]['wtw_intensity'], line_dash="solid", line_color="black", annotation_text=f"Selected Fuel ({fuel}): {FUEL_INFO[fuel]['wtw_intensity']}", annotation_position="top right")
     fig_limit.update_layout(xaxis_title="Calendar Year", yaxis_title="GHG Intensity (gCO2eq/MJ)")
     st.plotly_chart(fig_limit, use_container_width=True)
 
 with st.expander("📝 Detailed Simulation Data"):
     st.dataframe(df_res.set_index("Calendar_Year").drop(columns=['Year_Index'], errors='ignore'), use_container_width=True)
+
+# --- 9. 민감도 분석 (Batch 시뮬레이션 확장판: 1D & 2D) ---
+st.divider()
+st.header("🔄 민감도 분석 (Batch 시뮬레이션 확장판)")
+st.markdown("선박 효율, 금융, 규제 등 핵심 파라미터 조합이 **원하는 출력 지표**에 미치는 영향을 시뮬레이션합니다. (2개 변수 선택 시 2D 히트맵 생성)")
+
+def get_def_str(p_name):
+    if p_name == "Target Speed (knots)": return "13.0, 14.0, 14.5, 15.0, 16.0"
+    elif p_name == "Annual Sailing Ratio (%)": return "60, 70, 75, 80, 90"
+    elif p_name == "Simulation Period (Years)": return "10, 15, 20, 25, 30"
+    elif p_name == "EU 기항 비율 (%)": return "0, 30, 50, 70, 100"
+    elif p_name == "초기 EU-ETS 탄소단가 ($/ton)": return "50, 82, 100, 150, 200"
+    elif p_name == "초기 IMO 탄소세 ($/ton)": return "0, 50, 100, 150, 200"
+    elif p_name == "할인율 (Discount Rate, %)": return "5.0, 6.0, 7.0, 8.0, 10.0"
+    elif p_name == "선박 대출 비율 (LTV, %)": return "0, 50, 70, 80, 100"
+    elif p_name == "초기 대출 금리 (Loan Rate, %)": return "4.0, 5.0, 6.5, 8.0, 10.0"
+    elif p_name == "대출 기간 (Years)": return "5, 10, 15, 20"
+    elif p_name == "CAPEX A ($M)": return f"{a_capex-4}, {a_capex-2}, {a_capex}, {a_capex+2}, {a_capex+4}"
+    elif p_name == "CAPEX B ($M)": return f"{b_capex-4}, {b_capex-2}, {b_capex}, {b_capex+2}, {b_capex+4}"
+    elif p_name == "Generator Power A (kW)": return "500, 600, 629, 700"
+    elif p_name == "Generator Power B (kW)": return "700, 800, 862, 950"
+    return "0, 1, 2"
+
+param_list = [
+    "Target Speed (knots)", "Annual Sailing Ratio (%)", "Simulation Period (Years)",
+    "EU 기항 비율 (%)", "초기 EU-ETS 탄소단가 ($/ton)", "초기 IMO 탄소세 ($/ton)",
+    "할인율 (Discount Rate, %)", "선박 대출 비율 (LTV, %)", "초기 대출 금리 (Loan Rate, %)",
+    "대출 기간 (Years)", "CAPEX A ($M)", "CAPEX B ($M)", "Generator Power A (kW)", "Generator Power B (kW)"
+]
+
+# 출력 변수 리스트 (페이백 년도 추가됨!)
+target_metrics_list = [
+    "최종 NPV ($M)", 
+    "페이백(년)", 
+    "단순 누적 이익 ($M)", 
+    "총 대출이자 지출 ($M)", 
+    "Daily FOC_A (mt/d)", 
+    "Daily CO2_A (mt/d)"
+]
+
+b_col1, b_col2 = st.columns([1, 2.5])
+
+with b_col1:
+    batch_param1 = st.selectbox("📌 비교할 변수 1 (X축)", param_list, index=0)
+    test_values_str1 = st.text_input("변수 1 테스트 값 (쉼표로 구분)", get_def_str(batch_param1))
+    
+    st.write("")
+    
+    batch_param2 = st.selectbox("📌 비교할 변수 2 (Y축, 선택사항)", ["선택 안함"] + param_list, index=0)
+    if batch_param2 != "선택 안함":
+        test_values_str2 = st.text_input("변수 2 테스트 값 (쉼표로 구분)", get_def_str(batch_param2))
+    
+    st.markdown("---")
+    target_metric = st.selectbox("🎯 결과 그래프에 표시할 출력 지표", target_metrics_list, index=0)
+    
+    st.write("")
+    run_batch = st.button("배치(Batch) 실행", type="primary", use_container_width=True)
+
+with b_col2:
+    if run_batch:
+        try:
+            vals1 = [float(v.strip()) for v in test_values_str1.split(',')]
+            is_2d = batch_param2 != "선택 안함"
+            vals2 = [float(v.strip()) for v in test_values_str2.split(',')] if is_2d else [None]
+            
+            combinations = list(itertools.product(vals1, vals2))
+            
+            def run_single_sim(val1, val2):
+                sim_params = {
+                    "v_target": v_target, "sailing_ratio": sailing_ratio, "sim_years": sim_years,
+                    "eu_ratio": eu_ratio, "eua_price": None, "imo_levy": None,
+                    "discount_rate": discount_rate, "ltv": ltv, "loan_rate": None,
+                    "loan_term": loan_term, "a_capex": a_capex, "b_capex": b_capex,
+                    "a_gen": a_gen_power, "b_gen": b_gen_power
+                }
+                
+                def apply_override(p_name, p_val):
+                    if p_name == "Target Speed (knots)": sim_params["v_target"] = p_val
+                    elif p_name == "Annual Sailing Ratio (%)": sim_params["sailing_ratio"] = p_val
+                    elif p_name == "Simulation Period (Years)": sim_params["sim_years"] = int(p_val)
+                    elif p_name == "EU 기항 비율 (%)": sim_params["eu_ratio"] = p_val / 100.0
+                    elif p_name == "초기 EU-ETS 탄소단가 ($/ton)": sim_params["eua_price"] = p_val
+                    elif p_name == "초기 IMO 탄소세 ($/ton)": sim_params["imo_levy"] = p_val
+                    elif p_name == "할인율 (Discount Rate, %)": sim_params["discount_rate"] = p_val / 100.0
+                    elif p_name == "선박 대출 비율 (LTV, %)": sim_params["ltv"] = p_val / 100.0
+                    elif p_name == "초기 대출 금리 (Loan Rate, %)": sim_params["loan_rate"] = p_val / 100.0
+                    elif p_name == "대출 기간 (Years)": sim_params["loan_term"] = int(p_val)
+                    elif p_name == "CAPEX A ($M)": sim_params["a_capex"] = p_val
+                    elif p_name == "CAPEX B ($M)": sim_params["b_capex"] = p_val
+                    elif p_name == "Generator Power A (kW)": sim_params["a_gen"] = p_val
+                    elif p_name == "Generator Power B (kW)": sim_params["b_gen"] = p_val
+
+                apply_override(batch_param1, val1)
+                if is_2d: apply_override(batch_param2, val2)
+                
+                sp = sim_params
+                sim_op_days = 365 * (sp["sailing_ratio"] / 100)
+                sim_non_eu_ratio = 1.0 - sp["eu_ratio"]
+                
+                _, sim_foc_a = calc_total_metrics(sp["v_target"], a_des_a, a_des_b, a_bal_a, a_bal_b, sp["a_gen"], fuel)
+                _, sim_foc_b = calc_total_metrics(sp["v_target"], b_des_a, b_des_b, b_bal_a, b_bal_b, sp["b_gen"], fuel)
+                
+                sim_co2_a = sim_foc_a * FUEL_INFO[fuel]['cf']
+                sim_co2_b = sim_foc_b * FUEL_INFO[fuel]['cf']
+                
+                c_diff = (sp["a_capex"] - sp["b_capex"]) * 1e6
+                l_diff = c_diff * sp["ltv"]
+                e_diff = c_diff * (1 - sp["ltv"])
+                
+                rem_l = l_diff
+                tot_int = 0
+                prin_pay = l_diff / sp["loan_term"] if sp["loan_term"] > 0 else 0
+                
+                cum_pure_sav = 0
+                cum_npv_dcf = 0
+                sim_bep_npv = None
+                c_y_a, c_y_b = 0, 0
+                
+                for y in range(1, sp["sim_years"] + 1):
+                    cal_yr = start_year + y - 1
+                    pidx = 0 if y <= 10 else 1 if y <= 20 else 2
+                    
+                    c_f_p = edited_scenario.iloc[pidx]['Fuel Price ($/ton)']
+                    c_e_p = sp["eua_price"] * (1.0 if pidx==0 else 1.3 if pidx==1 else 1.6) if sp["eua_price"] is not None else edited_scenario.iloc[pidx]['EU-ETS Price ($/ton)']
+                    c_i_l = sp["imo_levy"] * (1.0 if pidx==0 else 1.5 if pidx==1 else 2.0) if sp["imo_levy"] is not None else edited_scenario.iloc[pidx]['IMO Levy ($/ton)']
+                    c_l_r = max(0.0, sp["loan_rate"] - (0.01 if pidx==1 else 0.015 if pidx==2 else 0.0)) if sp["loan_rate"] is not None else edited_scenario.iloc[pidx]['Loan Rate (%)'] / 100
+                        
+                    f_c_a, f_c_b = sim_foc_a * sim_op_days * c_f_p, sim_foc_b * sim_op_days * c_f_p
+                    a_c_a, a_c_b = sim_co2_a * sim_op_days, sim_co2_b * sim_op_days
+                    e_m_a, e_m_b = sim_foc_a * sim_op_days * 1000 * FUEL_INFO[fuel]['lhv'], sim_foc_b * sim_op_days * 1000 * FUEL_INFO[fuel]['lhv']
+                    
+                    e_a, e_b = a_c_a * sp["eu_ratio"] * c_e_p, a_c_b * sp["eu_ratio"] * c_e_p
+                    i_a = a_c_a * sim_non_eu_ratio * c_i_l if cal_yr >= 2028 else 0
+                    i_b = a_c_b * sim_non_eu_ratio * c_i_l if cal_yr >= 2028 else 0
+                    
+                    tgt_int = get_fueleu_target(cal_yr)
+                    defic = FUEL_INFO[fuel]['wtw_intensity'] - tgt_int
+                    p_f_u = (2400 * EUR_TO_USD) / (41000 * 91.16)
+                    
+                    pen_a = pen_b = 0
+                    if defic > 0:
+                        c_y_a += 1; c_y_b += 1
+                        pen_a = (defic * e_m_a) * p_f_u * (1.0 + (c_y_a - 1) * 0.1) * sp["eu_ratio"]
+                        pen_b = (defic * e_m_b) * p_f_u * (1.0 + (c_y_b - 1) * 0.1) * sp["eu_ratio"]
+                    else:
+                        c_y_a = c_y_b = 0
+                        
+                    p_sav = (f_c_b + e_b + i_b + pen_b) - (f_c_a + e_a + i_a + pen_a)
+                    cum_pure_sav += p_sav
+                    
+                    if y <= sp["loan_term"]:
+                        i_pay = rem_l * c_l_r
+                        l_pay = prin_pay + i_pay
+                        tot_int += i_pay
+                        rem_l -= prin_pay
+                    else:
+                        l_pay = 0
+                        
+                    ncf_nom = p_sav - l_pay
+                    ncf_dcf = ncf_nom / ((1 + sp["discount_rate"])**y)
+                    cum_npv_dcf += ncf_dcf
+                    
+                    npv_n = cum_npv_dcf - e_diff
+                    if sim_bep_npv is None and npv_n >= 0:
+                        sim_bep_npv = y
+                
+                res_dict = {f"{batch_param1}": val1}
+                if is_2d: res_dict[f"{batch_param2}"] = val2
+                res_dict["최종 NPV ($M)"] = round(npv_n / 1e6, 2)
+                res_dict["단순 누적 이익 ($M)"] = round((cum_pure_sav - c_diff) / 1e6, 2)
+                res_dict["총 대출이자 지출 ($M)"] = round(tot_int / 1e6, 2)
+                res_dict["Daily FOC_A (mt/d)"] = round(sim_foc_a, 2)
+                res_dict["Daily CO2_A (mt/d)"] = round(sim_co2_a, 2)
+                res_dict["페이백(년)"] = sim_bep_npv if sim_bep_npv else "불가"
+                
+                return res_dict
+            
+            # 모든 시나리오 계산 수행
+            batch_results = [run_single_sim(v1, v2) for v1, v2 in combinations]
+            df_batch = pd.DataFrame(batch_results)
+            
+            # 지표별 색상 및 텍스트 포맷 설정
+            if target_metric in ["최종 NPV ($M)", "단순 누적 이익 ($M)"]:
+                c_scale = 'RdYlGn'
+                c_map_1d = ['#ff4b4b' if val < 0 else '#00CC96' for val in df_batch[target_metric]]
+                txt_template = "%{text:.2f}"
+            elif target_metric == "페이백(년)":
+                c_scale = 'RdYlGn_r'  # 페이백은 짧을수록(낮을수록) 좋으므로 Reverse 컬러맵 적용
+                c_map_1d = ['#ff4b4b' if str(val) == "불가" else '#00CC96' for val in df_batch[target_metric]]
+                txt_template = "%{text}"
+            else:
+                c_scale = 'Reds' if target_metric == "총 대출이자 지출 ($M)" else 'Blues'
+                c_map_1d = ['#1f77b4'] * len(df_batch)  
+                txt_template = "%{text:.2f}"
+            
+            if not is_2d:
+                # --- 1D 막대 그래프 ---
+                st.markdown(f"**✅ '{batch_param1}' 변화에 따른 [{target_metric}] 비교**")
+                st.dataframe(df_batch, use_container_width=True)
+                
+                # "불가" 문자열이 섞여있을 때 Plotly 바 차트 오류 방지를 위해 임시로 Y값을 0으로 치환 (라벨은 그대로 유지)
+                y_vals = df_batch[target_metric].replace("불가", 0) if target_metric == "페이백(년)" else df_batch[target_metric]
+                
+                fig_batch = go.Figure()
+                fig_batch.add_trace(go.Bar(
+                    x=[str(v) for v in df_batch[f"{batch_param1}"]], 
+                    y=y_vals, 
+                    text=df_batch[target_metric],
+                    texttemplate=txt_template,
+                    textposition='auto', marker_color=c_map_1d, name=target_metric
+                ))
+                fig_batch.update_layout(title=f"'{batch_param1}' 변화에 따른 {target_metric} 비교",
+                                        xaxis_title=batch_param1, yaxis_title=target_metric)
+                st.plotly_chart(fig_batch, use_container_width=True)
+            
+            else:
+                # --- 2D 히트맵 ---
+                st.markdown(f"**✅ '{batch_param1}' & '{batch_param2}' 조합 시나리오 [{target_metric}] 히트맵**")
+                
+                # 피벗 테이블 생성 (Y축: 변수2, X축: 변수1)
+                pivot_df = df_batch.pivot(index=f"{batch_param2}", columns=f"{batch_param1}", values=target_metric)
+                
+                # "불가" 문자열은 렌더링 시 최악의 색상(빨간색)을 띄도록 999로 치환
+                z_vals = pivot_df.replace("불가", 999).values if target_metric == "페이백(년)" else pivot_df.values
+                
+                # 히트맵 그리기
+                fig_heat = go.Figure(data=go.Heatmap(
+                    z=z_vals,
+                    x=[str(c) for c in pivot_df.columns],
+                    y=[str(r) for r in pivot_df.index],
+                    colorscale=c_scale, 
+                    text=pivot_df.values,
+                    texttemplate=txt_template, 
+                    showscale=True,
+                    colorbar=dict(title="")
+                ))
+                
+                fig_heat.update_layout(
+                    title=f"[{target_metric}] 민감도 분석: {batch_param1} vs {batch_param2}",
+                    xaxis_title=batch_param1,
+                    yaxis_title=batch_param2,
+                    margin=dict(l=20, r=20, t=40, b=20)
+                )
+                st.plotly_chart(fig_heat, use_container_width=True)
+                
+                with st.expander("결과 데이터 표(Table)로 전체 항목 보기"):
+                    st.dataframe(pivot_df, use_container_width=True)
+            
+        except Exception as e:
+            st.error("입력값이 올바르지 않거나 중복된 변수를 선택했습니다. 쉼표(,)와 숫자를 올바르게 입력하고, 서로 다른 두 변수를 선택해 주세요.")
