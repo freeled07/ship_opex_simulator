@@ -130,7 +130,7 @@ co2_b_min = foc_b_min * FUEL_INFO[fuel]['cf']
 co2_b_max = foc_b_max * FUEL_INFO[fuel]['cf']
 
 # --- 4. 시뮬레이션 및 규제, 금융, 할인율, 오차 통합 ---
-st.title("📊 Ship Efficiency & OPEX Comparison (NPV Uncertainty & Confidence Interval)")
+st.title("📊 Ship OPEX Comparison (NPV Uncertainty & Confidence Interval)")
 
 current_base_price = FUEL_INFO[fuel]['base_price']
 scenario_data = pd.DataFrame({
