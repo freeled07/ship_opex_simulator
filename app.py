@@ -130,7 +130,7 @@ co2_b_min = foc_b_min * FUEL_INFO[fuel]['cf']
 co2_b_max = foc_b_max * FUEL_INFO[fuel]['cf']
 
 # --- 4. 시뮬레이션 및 규제, 금융, 할인율, 오차 통합 ---
-st.title("📊 Ship OPEX Comparison (NPV Uncertainty & Confidence Interval)")
+st.title("📊 Ship Efficiency & OPEX Comparison (NPV Uncertainty & Confidence Interval)")
 
 current_base_price = FUEL_INFO[fuel]['base_price']
 scenario_data = pd.DataFrame({
@@ -150,21 +150,20 @@ equity_diff = capex_diff * (1 - ltv)
 
 results = []
 cum_pure_saving_base = cum_pure_saving_best = cum_pure_saving_worst = 0
+cum_nominal_ncf_base = 0  # 명목이익 선을 위한 누적 NCF 변수 추가
 cum_npv_dcf_base = cum_npv_dcf_best = cum_npv_dcf_worst = 0
 
-bep_year_npv_base = None
-bep_year_npv_best = None
-bep_year_npv_worst = None
+bep_year_npv_base = bep_year_npv_best = bep_year_npv_worst = None
 start_year = 2026
-cons_years_a = cons_years_b = 0
 EUR_TO_USD = 1.1
 
 rem_loan_diff = loan_diff
 total_interest_diff = 0
 principal_payment = loan_diff / loan_term if loan_term > 0 else 0
 
-def calc_opex(foc, sim_year, c_f_p, c_e_p, c_i_l, eu_r, non_eu_r, is_a_ship=True):
-    global cons_years_a, cons_years_b
+cons_years_penalty = 0
+
+def calc_opex_fixed(foc, sim_year, c_f_p, c_e_p, c_i_l, eu_r, non_eu_r, consec_yrs):
     fuel_cost = foc * op_days * c_f_p
     ann_co2 = foc * FUEL_INFO[fuel]['cf'] * op_days
     energy_mj = foc * op_days * 1000 * FUEL_INFO[fuel]['lhv']
@@ -178,15 +177,7 @@ def calc_opex(foc, sim_year, c_f_p, c_e_p, c_i_l, eu_r, non_eu_r, is_a_ship=True
     
     pen = 0
     if defic > 0:
-        if is_a_ship:
-            cons_years_a += 1
-            pen = (defic * energy_mj) * p_f_u * (1.0 + (cons_years_a - 1) * 0.1) * eu_r
-        else:
-            cons_years_b += 1
-            pen = (defic * energy_mj) * p_f_u * (1.0 + (cons_years_b - 1) * 0.1) * eu_r
-    else:
-        if is_a_ship: cons_years_a = 0
-        else: cons_years_b = 0
+        pen = (defic * energy_mj) * p_f_u * (1.0 + (consec_yrs - 1) * 0.1) * eu_r
         
     return fuel_cost + ets + imo + pen
 
@@ -199,13 +190,18 @@ for y in range(1, sim_years + 1):
     c_i_l = edited_scenario.iloc[pidx]['IMO Levy ($/ton)']
     c_l_r = edited_scenario.iloc[pidx]['Loan Rate (%)'] / 100
     
-    opex_a_base = calc_opex(foc_a_base, cal_year, c_f_p, c_e_p, c_i_l, eu_ratio, non_eu_ratio, True)
-    opex_b_base = calc_opex(foc_b_base, cal_year, c_f_p, c_e_p, c_i_l, eu_ratio, non_eu_ratio, False)
+    tgt_int = get_fueleu_target(cal_year)
+    defic = FUEL_INFO[fuel]['wtw_intensity'] - tgt_int
+    if defic > 0: cons_years_penalty += 1
+    else: cons_years_penalty = 0
     
-    opex_a_min = calc_opex(foc_a_min, cal_year, c_f_p, c_e_p, c_i_l, eu_ratio, non_eu_ratio, True)
-    opex_a_max = calc_opex(foc_a_max, cal_year, c_f_p, c_e_p, c_i_l, eu_ratio, non_eu_ratio, True)
-    opex_b_min = calc_opex(foc_b_min, cal_year, c_f_p, c_e_p, c_i_l, eu_ratio, non_eu_ratio, False)
-    opex_b_max = calc_opex(foc_b_max, cal_year, c_f_p, c_e_p, c_i_l, eu_ratio, non_eu_ratio, False)
+    opex_a_base = calc_opex_fixed(foc_a_base, cal_year, c_f_p, c_e_p, c_i_l, eu_ratio, non_eu_ratio, cons_years_penalty)
+    opex_b_base = calc_opex_fixed(foc_b_base, cal_year, c_f_p, c_e_p, c_i_l, eu_ratio, non_eu_ratio, cons_years_penalty)
+    
+    opex_a_min = calc_opex_fixed(foc_a_min, cal_year, c_f_p, c_e_p, c_i_l, eu_ratio, non_eu_ratio, cons_years_penalty)
+    opex_a_max = calc_opex_fixed(foc_a_max, cal_year, c_f_p, c_e_p, c_i_l, eu_ratio, non_eu_ratio, cons_years_penalty)
+    opex_b_min = calc_opex_fixed(foc_b_min, cal_year, c_f_p, c_e_p, c_i_l, eu_ratio, non_eu_ratio, cons_years_penalty)
+    opex_b_max = calc_opex_fixed(foc_b_max, cal_year, c_f_p, c_e_p, c_i_l, eu_ratio, non_eu_ratio, cons_years_penalty)
     
     pure_saving_base = opex_b_base - opex_a_base
     pure_saving_best = opex_b_max - opex_a_min
@@ -221,7 +217,11 @@ for y in range(1, sim_years + 1):
     else:
         loan_payment = 0
         
-    ncf_dcf_base = (pure_saving_base - loan_payment) / ((1 + discount_rate)**y)
+    ncf_nom_base = pure_saving_base - loan_payment
+    cum_nominal_ncf_base += ncf_nom_base
+    net_profit_nominal_base = cum_nominal_ncf_base - equity_diff
+        
+    ncf_dcf_base = ncf_nom_base / ((1 + discount_rate)**y)
     ncf_dcf_best = (pure_saving_best - loan_payment) / ((1 + discount_rate)**y)
     ncf_dcf_worst = (pure_saving_worst - loan_payment) / ((1 + discount_rate)**y)
     
@@ -240,6 +240,7 @@ for y in range(1, sim_years + 1):
     results.append({
         "Calendar_Year": cal_year,
         "Net_Profit_Pure": cum_pure_saving_base - capex_diff,
+        "Net_Profit_Nominal_Base": net_profit_nominal_base,
         "Net_Profit_NPV_Base": npv_base,
         "Net_Profit_NPV_Best": npv_best,
         "Net_Profit_NPV_Worst": npv_worst
@@ -247,8 +248,7 @@ for y in range(1, sim_years + 1):
 
 df_res = pd.DataFrame(results)
 
-# --- 5. UI 메트릭 (오차 범위 하단 텍스트 표기 적용) ---
-
+# --- 5. UI 메트릭 ---
 def render_range_html(min_v, max_v, fmt="%.1f", unit=""):
     return f"<div style='font-size: 13px; color: #808495; margin-top: -3px;'>📉 범위: {fmt % min_v}{unit} ~ {fmt % max_v}{unit}</div>"
 
@@ -275,7 +275,6 @@ with m5:
     final_npv_best = df_res['Net_Profit_NPV_Best'].iloc[-1]
     final_npv_worst = df_res['Net_Profit_NPV_Worst'].iloc[-1]
     st.metric(f"🎯 {sim_years}년 최종 NPV", f"$ {final_npv_base/1e6:.1f} M")
-    # 최악(Worst)이 금액적으로는 더 작으므로 min 자리에 배치
     st.markdown(render_range_html(final_npv_worst/1e6, final_npv_best/1e6, "%.1f", " M"), unsafe_allow_html=True)
 
 st.write("")
@@ -296,11 +295,33 @@ with m9:
 with m10:
     payback_text = f"{bep_year_npv_base} 년" if bep_year_npv_base else f"불가 ({sim_years}년 내)"  
     st.metric("🎯 Base 페이백 (NPV 기준)", payback_text)
-    
     best_str = f"{bep_year_npv_best}년" if bep_year_npv_best else "불가"
     worst_str = f"{bep_year_npv_worst}년" if bep_year_npv_worst else "불가"
-    # 페이백은 연도가 짧은 것(Best)이 최소값이므로 순서대로 표기
     st.markdown(f"<div style='font-size: 13px; color: #808495; margin-top: -3px;'>📉 범위: {best_str} ~ {worst_str}</div>", unsafe_allow_html=True)
+
+# --- 재무적 손실 요인 가시화 ---
+st.divider()
+st.subheader("💸 대출 이자 및 인플레이션(할인율)에 의한 수익 증발 요약")
+st.markdown("""
+<style>
+div[data-testid="stAlert"] {
+    height: 200px; 
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+</style>
+""", unsafe_allow_html=True)
+
+fm1, fm2, fm3 = st.columns(3)
+with fm1:
+    st.info(f"**1. 이자 지출액 (변동금리)**\n\n비싼 선박을 구매하며 추가로 발생한 대출 이자의 누적액입니다.\n\n### - $ {total_interest_diff/1e6:.1f} M")
+with fm2:
+    discount_loss = df_res['Net_Profit_Nominal_Base'].iloc[-1] - df_res['Net_Profit_NPV_Base'].iloc[-1]
+    st.warning(f"**2. 시간가치 하락분 (할인율)**\n\n미래에 발생할 절감액을 현재 가치로 할인했을 때 증발한 금액입니다.\n\n### - $ {discount_loss/1e6:.1f} M")
+with fm3:
+    pure_profit = df_res['Net_Profit_Pure'].iloc[-1]
+    st.success(f"**3. 실질 순이익 (최종 NPV)**\n\n단순 절감액에서 이자 비용과 시간가치 하락분을 뺀 진짜 이익입니다.\n\n### $ {final_npv_base/1e6:.1f} M")
 
 # 불확실성 범위 강조 박스 추가
 st.divider()
@@ -309,20 +330,27 @@ st.info(f"**최종 예상 NPV (평균): $ {final_npv_base/1e6:.1f} M**\n\n설정
 
 st.divider()
 
-# --- 6. 시각화 (상단 오차 밴드 그림자 그래프) ---
+# --- 6. 시각화 (상단 오차 밴드 그림자 그래프 + 명목이익 선 부활) ---
 c1, c2, c3 = st.columns([2, 1, 1])
 
 with c1:
     st.subheader("📈 Profit Curve: 모델 신뢰 구간(Confidence Interval) 포함")
     fig = go.Figure()
     
+    # 1. 단순 OPEX 누적이익 (점선)
     fig.add_trace(go.Scatter(x=df_res['Calendar_Year'], y=df_res['Net_Profit_Pure'], mode='lines', name='단순 OPEX 누적이익', line=dict(color='gray', width=2, dash='dash')))
     
+    # 2. 명목 이익 (연두색 실선 - 부활)
+    fig.add_trace(go.Scatter(x=df_res['Calendar_Year'], y=df_res['Net_Profit_Nominal_Base'], mode='lines', name='명목 이익 (대출이자 차감)', line=dict(color='#82C59D', width=2)))
+    
+    # 3. NPV 불확도 범위 (그림자 밴드)
     fig.add_trace(go.Scatter(x=df_res['Calendar_Year'], y=df_res['Net_Profit_NPV_Worst'], mode='lines', line=dict(width=0), showlegend=False, hoverinfo='skip'))
-    fig.add_trace(go.Scatter(x=df_res['Calendar_Year'], y=df_res['Net_Profit_NPV_Best'], mode='lines', fill='tonexty', fillcolor='rgba(0, 204, 150, 0.2)', line=dict(width=0), name='모델 오차 반영 예상 편차범위 (Range)'))
+    fig.add_trace(go.Scatter(x=df_res['Calendar_Year'], y=df_res['Net_Profit_NPV_Best'], mode='lines', fill='tonexty', fillcolor='rgba(0, 204, 150, 0.2)', line=dict(width=0), name='NPV 예상 편차범위 (Range)'))
     
-    fig.add_trace(go.Scatter(x=df_res['Calendar_Year'], y=df_res['Net_Profit_NPV_Base'], mode='lines', name='최종 NPV (Base 평균)', line=dict(color='#00CC96', width=4)))
+    # 4. 최종 NPV Base (진한 녹색 실선)
+    fig.add_trace(go.Scatter(x=df_res['Calendar_Year'], y=df_res['Net_Profit_NPV_Base'], mode='lines', name='최종 NPV (순현재가치)', line=dict(color='#00CC96', width=4)))
     
+    # Break-even 별표 마커
     if bep_year_npv_base:
         cal_bep_year = start_year + bep_year_npv_base - 1
         bep_profit = df_res.loc[df_res['Calendar_Year'] == cal_bep_year, 'Net_Profit_NPV_Base'].values[0]
@@ -365,7 +393,7 @@ with c4:
     e_m_b_base = foc_b_base * op_days * 1000 * FUEL_INFO[fuel]['lhv']
     
     res_env = []
-    cy_a = cy_b = 0
+    cy_pen = 0
     for y in range(1, sim_years + 1):
         cal_yr = start_year + y - 1
         pidx = 0 if y <= 10 else 1 if y <= 20 else 2
@@ -383,11 +411,11 @@ with c4:
         
         p_a = p_b = 0
         if dfc > 0:
-            cy_a+=1; cy_b+=1
-            p_a = (dfc * e_m_a_base) * pfu * (1.0 + (cy_a - 1) * 0.1) * eu_ratio
-            p_b = (dfc * e_m_b_base) * pfu * (1.0 + (cy_b - 1) * 0.1) * eu_ratio
+            cy_pen += 1
+            p_a = (dfc * e_m_a_base) * pfu * (1.0 + (cy_pen - 1) * 0.1) * eu_ratio
+            p_b = (dfc * e_m_b_base) * pfu * (1.0 + (cy_pen - 1) * 0.1) * eu_ratio
         else:
-            cy_a = cy_b = 0
+            cy_pen = 0
             
         res_env.append({"CY": cal_yr, "EA": ets_a, "IA": imo_a, "FA": p_a, "EB": ets_b, "IB": imo_b, "FB": p_b, "TGT": tgt})
         
@@ -524,7 +552,7 @@ with b_col2:
                 cum_pure_sav = 0
                 cum_npv_dcf = 0
                 s_bep = None
-                c_y_a, c_y_b = 0, 0
+                cy_p = 0
                 
                 for y in range(1, sp["sim_years"] + 1):
                     cal_yr = start_year + y - 1
@@ -549,11 +577,11 @@ with b_col2:
                     
                     pen_a = pen_b = 0
                     if defic > 0:
-                        c_y_a += 1; c_y_b += 1
-                        pen_a = (defic * e_m_a) * p_f_u * (1.0 + (c_y_a - 1) * 0.1) * sp["eu_ratio"]
-                        pen_b = (defic * e_m_b) * p_f_u * (1.0 + (c_y_b - 1) * 0.1) * sp["eu_ratio"]
+                        cy_p += 1
+                        pen_a = (defic * e_m_a) * p_f_u * (1.0 + (cy_p - 1) * 0.1) * sp["eu_ratio"]
+                        pen_b = (defic * e_m_b) * p_f_u * (1.0 + (cy_p - 1) * 0.1) * sp["eu_ratio"]
                     else:
-                        c_y_a = c_y_b = 0
+                        cy_p = 0
                         
                     p_sav = (f_c_b + e_b + i_b + pen_b) - (f_c_a + e_a + i_a + pen_a)
                     cum_pure_sav += p_sav
